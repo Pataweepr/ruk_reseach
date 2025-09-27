@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pose Estimation Application - MediaPipe Based</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 30px;
+            padding: 30px;
+        }
+
+        .video-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .video-container {
+            position: relative;
+            display: inline-block;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
+        }
+
+        #videoStream {
+            width: 640px;
+            height: 480px;
+            display: block;
+            background: #000;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #27ae60, #229954);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(39, 174, 96, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.4);
+        }
+
+        .info-panel {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .info-panel h3 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+
+        .status-card {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-left: 4px solid #3498db;
+        }
+
+        .status-card h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .status-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #27ae60;
+        }
+
+        .status-value.error {
+            color: #e74c3c;
+        }
+
+        .status-value.warning {
+            color: #f39c12;
+        }
+
+        .pose-data {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .pose-data h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .keypoint-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        .keypoint-item:last-child {
+            border-bottom: none;
+        }
+
+        .keypoint-name {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .keypoint-value {
+            color: #7f8c8d;
+            font-family: monospace;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #e74c3c;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .success-message {
+            background: #27ae60;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            #videoStream {
+                width: 100%;
+                max-width: 640px;
+                height: auto;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Pose Estimation Application</h1>
+            <p>Real-time pose estimation using MediaPipe technology</p>
+        </div>
+
+        <div class="main-content">
+            <div class="video-section">
+                <div class="video-container">
+                    <img id="videoStream" src="/video_feed" alt="Video Stream">
+                </div>
+                
+                <div class="controls">
+                    <button class="btn btn-primary" onclick="startStream()">Start Stream</button>
+                    <button class="btn btn-success" onclick="toggleEstimation()">Toggle Estimation</button>
+                    <button class="btn btn-danger" onclick="stopStream()">Stop Stream</button>
+                </div>
+
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Loading...</p>
+                </div>
+
+                <div class="error-message" id="errorMessage"></div>
+                <div class="success-message" id="successMessage"></div>
+            </div>
+
+            <div class="info-panel">
+                <h3>📊 System Status</h3>
+                
+                <div class="status-card">
+                    <h4>Estimation Status</h4>
+                    <div class="status-value" id="estimationStatus">Unknown</div>
+                </div>
+
+                <div class="status-card">
+                    <h4>MediaPipe Available</h4>
+                    <div class="status-value" id="mediapipeStatus">Checking...</div>
+                </div>
+
+                <div class="status-card">
+                    <h4>Stream Status</h4>
+                    <div class="status-value" id="streamStatus">Stopped</div>
+                </div>
+
+                <div class="status-card">
+                    <h4>Pose Confidence</h4>
+                    <div class="status-value" id="poseConfidence">--</div>
+                </div>
+
+                <h3>🔍 Pose Analysis</h3>
+                <div class="pose-data" id="poseData">
+                    <p>No pose data available. Start the stream to see real-time pose estimation.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isStreaming = false;
+        let estimationEnabled = true;
+        let poseDataInterval;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            checkSystemStatus();
+            updateStatus();
+        });
+
+        async function checkSystemStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                document.getElementById('mediapipeStatus').textContent = 
+                    status.mediapipe_available ? 'Available' : 'Fallback Mode';
+                document.getElementById('mediapipeStatus').className = 
+                    status.mediapipe_available ? 'status-value' : 'status-value warning';
+                
+                document.getElementById('estimationStatus').textContent = 
+                    status.estimation_enabled ? 'Enabled' : 'Disabled';
+                document.getElementById('estimationStatus').className = 
+                    status.estimation_enabled ? 'status-value' : 'status-value warning';
+                
+            } catch (error) {
+                console.error('Error checking system status:', error);
+                showError('Failed to check system status');
+            }
+        }
+
+        function startStream() {
+            if (isStreaming) return;
+            
+            showLoading(true);
+            document.getElementById('videoStream').src = '/video_feed';
+            isStreaming = true;
+            
+            // Start updating pose data
+            poseDataInterval = setInterval(updatePoseData, 1000);
+            
+            setTimeout(() => {
+                showLoading(false);
+                document.getElementById('streamStatus').textContent = 'Active';
+                document.getElementById('streamStatus').className = 'status-value';
+                showSuccess('Video stream started successfully');
+            }, 2000);
+        }
+
+        function stopStream() {
+            if (!isStreaming) return;
+            
+            document.getElementById('videoStream').src = '';
+            isStreaming = false;
+            
+            // Stop updating pose data
+            if (poseDataInterval) {
+                clearInterval(poseDataInterval);
+            }
+            
+            document.getElementById('streamStatus').textContent = 'Stopped';
+            document.getElementById('streamStatus').className = 'status-value error';
+            document.getElementById('poseData').innerHTML = 
+                '<p>No pose data available. Start the stream to see real-time pose analysis.</p>';
+            document.getElementById('poseConfidence').textContent = '--';
+        }
+
+        async function toggleEstimation() {
+            try {
+                const response = await fetch('/api/toggle_estimation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                estimationEnabled = result.estimation_enabled;
+                
+                document.getElementById('estimationStatus').textContent = 
+                    estimationEnabled ? 'Enabled' : 'Disabled';
+                document.getElementById('estimationStatus').className = 
+                    estimationEnabled ? 'status-value' : 'status-value warning';
+                
+                showSuccess(`Estimation ${estimationEnabled ? 'enabled' : 'disabled'}`);
+                
+            } catch (error) {
+                console.error('Error toggling estimation:', error);
+                showError('Failed to toggle estimation');
+            }
+        }
+
+        async function updatePoseData() {
+            if (!isStreaming) return;
+            
+            try {
+                const response = await fetch('/api/pose_data');
+                const data = await response.json();
+                
+                if (data.status === 'pose_detected') {
+                    // Update confidence
+                    document.getElementById('poseConfidence').textContent = 
+                        (data.confidence_avg * 100).toFixed(1) + '%';
+                    document.getElementById('poseConfidence').className = 'status-value';
+                    
+                    // Update pose data
+                    updatePoseDataDisplay(data);
+                } else {
+                    document.getElementById('poseConfidence').textContent = 'No pose detected';
+                    document.getElementById('poseConfidence').className = 'status-value warning';
+                    document.getElementById('poseData').innerHTML = 
+                        '<p>No pose detected in current frame.</p>';
+                }
+                
+            } catch (error) {
+                console.error('Error updating pose data:', error);
+            }
+        }
+
+        function updatePoseDataDisplay(data) {
+            const poseDataDiv = document.getElementById('poseData');
+            let html = '<h4>Detected Body Parts:</h4>';
+            
+            if (data.body_parts) {
+                for (const [partName, partData] of Object.entries(data.body_parts)) {
+                    if (partData.confidence > 0.5) {
+                        html += `
+                            <div class="keypoint-item">
+                                <span class="keypoint-name">${partName.replace('_', ' ')}</span>
+                                <span class="keypoint-value">
+                                    (${(partData.x * 100).toFixed(1)}%, ${(partData.y * 100).toFixed(1)}%)
+                                </span>
+                            </div>
+                        `;
+                    }
+                }
+            }
+            
+            if (data.arm_angles) {
+                html += '<h4 style="margin-top: 15px;">Arm Angles:</h4>';
+                if (data.arm_angles.right_arm) {
+                    html += `
+                        <div class="keypoint-item">
+                            <span class="keypoint-name">Right Arm</span>
+                            <span class="keypoint-value">${data.arm_angles.right_arm.toFixed(1)}°</span>
+                        </div>
+                    `;
+                }
+                if (data.arm_angles.left_arm) {
+                    html += `
+                        <div class="keypoint-item">
+                            <span class="keypoint-name">Left Arm</span>
+                            <span class="keypoint-value">${data.arm_angles.left_arm.toFixed(1)}°</span>
+                        </div>
+                    `;
+                }
+            }
+            
+            poseDataDiv.innerHTML = html;
+        }
+
+        function updateStatus() {
+            // Update status every 5 seconds
+            setInterval(checkSystemStatus, 5000);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            setTimeout(() => {
+                successDiv.style.display = 'none';
+            }, 3000);
+        }
+
+        // Handle page unload
+        window.addEventListener('beforeunload', function() {
+            if (poseDataInterval) {
+                clearInterval(poseDataInterval);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CPR Real-Time Guide - Phase 2.5 (Sway & Recoil+)</title>
+    <style>
+        /* ... (CSS เหมือนเดิมทั้งหมด) ... */
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; text-align: center; }
+        #container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            width: 640px;
+            height: 480px;
+            margin: 20px auto;
+            border: 2px solid #333;
+        }
+        #webcam { transform: scaleX(-1); width: 100%; height: 100%; }
+        #outputCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #statusMessage { font-size: 1.5rem; min-height: 2.5rem; color: #d9534f; }
+        #counterDisplay { font-size: 3rem; color: #333; min-height: 4rem; }
+        #feedbackContainer {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap; 
+            width: 640px;
+            margin: 10px auto;
+            padding: 10px;
+            background-color: #eee;
+            border-radius: 8px;
+        }
+        .feedbackBox { 
+            font-size: 1.2rem; 
+            font-weight: bold; 
+            margin: 5px; 
+            width: 120px; /* --- NEW: กำหนดความกว้าง --- */
+        }
+        .good { color: #4CAF50; }
+        .bad { color: #d9534f; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+    <h1>Phase 2.5: ควบคุมการโยกตัว (Sway) และมือลอย (Recoil+)</h1>
+    
+    <h2 id="statusMessage">จัดท่า: แขนตรง, มือประสานกันบนหน้าอก</h2>
+    <h2 id="counterDisplay"></h2>
+
+    <div id="container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="outputCanvas" width="640" height="480"></canvas>
+    </div>
+
+    <div id="feedbackContainer">
+        <div id="handStatus" class="feedbackBox bad">Hands: --</div>
+        <div id="swayStatus" class="feedbackBox bad">Sway: --</div> <div id="armStatus" class="feedbackBox">Arms: --</div>
+        <div id="rateStatus" class="feedbackBox">Rate: --</div>
+        <div id="recoilStatus" class="feedbackBox">Recoil: --</div>
+    </div>
+
+    <script type="module">
+        // --- 1. ตั้งค่าพื้นฐาน ---
+        const canvasElement = document.getElementById('outputCanvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const counterElement = document.getElementById('counterDisplay');
+        const statusElement = document.getElementById('statusMessage');
+        const rateElement = document.getElementById('rateStatus');
+        const recoilElement = document.getElementById('recoilStatus');
+        const handElement = document.getElementById('handStatus');
+        const armElement = document.getElementById('armStatus');
+        const swayElement = document.getElementById('swayStatus'); // -- NEW --
+
+        // --- 2. ตัวแปรจัดการสถานะ (เหมือนเดิม) ---
+        let appState = "calibrating";
+        let compressionCount = 0;
+        let lastWristY = 0;
+        let direction = "up"; 
+        let readyTimer = null;
+        const READY_THRESHOLD = 2000; 
+
+        // --- 3. ตัวแปรสำหรับ Threshold (เหมือนเดิม) ---
+        let lastPeakY = 0;
+        let valleyY = 0; 
+        const MIN_DEPTH_THRESHOLD = 0.05; 
+
+        // --- 4. ตัวแปรสำหรับ Rate & Recoil ---
+        let initialPeakY = 0; 
+        let lastCompressionTime = 0; 
+        const RECOIL_THRESHOLD = 0.03; // 3% tolerance (สำหรับทั้งขึ้นและลง)
+        let compressionIntervals = []; 
+        
+        // --- 5. ค่าคงที่ ---
+        const HANDS_TOGETHER_THRESHOLD = 0.1;
+        const ARM_STRAIGHT_THRESHOLD = 165; 
+        const ALIGNMENT_THRESHOLD = 0.15; // -- NEW -- (ค่าเดียวกับตอนเริ่ม)
+
+        // --- 6. ฟังก์ชัน onResults (เหมือนเดิม) ---
+        function onResults(results) {
+            /* ... (เหมือนเดิม) ... */
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.translate(canvasElement.width, 0);
+            canvasCtx.scale(-1, 1);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            if (results.poseLandmarks) {
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+                drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+                if (appState === "calibrating") {
+                    checkStartPosition(results.poseLandmarks);
+                } else if (appState === "running") {
+                    runContinuousQualityCheck(results.poseLandmarks);
+                }
+            } else {
+                if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; statusElement.innerText = "จัดท่า: แขนตรง, มือประสานกันบนหน้าอก"; }
+            }
+            canvasCtx.restore();
+        }
+        
+        // --- 7. ฟังก์ชันคำนวณมุม (เหมือนเดิม) ---
+        function getAngle(a, b, c) { /* ... (เหมือนเดิม) ... */ 
+            const angle = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+            let degrees = Math.abs(angle * 180.0 / Math.PI);
+            if (degrees > 180) degrees = 360 - degrees;
+            return degrees;
+        }
+        
+        // --- 8. ฟังก์ชันย่อย (เพิ่ม isAligned) ---
+        function areHandsTogether(p) {
+            const rWrist = p[16], lWrist = p[15];
+            const wristDistX = Math.abs(rWrist.x - lWrist.x);
+            const wristDistY = Math.abs(rWrist.y - lWrist.y);
+            return (wristDistX < HANDS_TOGETHER_THRESHOLD && wristDistY < HANDS_TOGETHER_THRESHOLD);
+        }
+
+        // -- NEW --
+        function areShouldersAligned(p) {
+            const rShoulder = p[12], rWrist = p[16];
+            const lShoulder = p[11], lWrist = p[15];
+            const isRightAligned = Math.abs(rShoulder.x - rWrist.x) < ALIGNMENT_THRESHOLD;
+            const isLeftAligned = Math.abs(lShoulder.x - lWrist.x) < ALIGNMENT_THRESHOLD;
+            return isRightAligned && isLeftAligned;
+        }
+
+        // --- 9. ฟังก์ชันตรวจสอบท่าเริ่มต้น (เหมือนเดิม) ---
+        function checkStartPosition(p) {
+            const rShoulder = p[12], rElbow = p[14], rWrist = p[16];
+            const lShoulder = p[11], lElbow = p[13], lWrist = p[15];
+            
+            const rightArmAngle = getAngle(rShoulder, rElbow, rWrist);
+            const leftArmAngle = getAngle(lShoulder, lElbow, lWrist);
+            const isArmStraight = rightArmAngle > ARM_STRAIGHT_THRESHOLD && leftArmAngle > ARM_STRAIGHT_THRESHOLD;
+            
+            const isAligned = areShouldersAligned(p); // ใชฟังก์ชันใหม่
+            const handsTogether = areHandsTogether(p); 
+
+            if (isArmStraight && isAligned && handsTogether) {
+                if (!readyTimer) {
+                    statusElement.innerText = "ท่าสวย! ค้างไว้ 2 วินาที...";
+                    statusElement.style.color = "#f0ad4e";
+                    readyTimer = setTimeout(() => {
+                        appState = "running";
+                        initialPeakY = (rWrist.y + lWrist.y) / 2; 
+                        lastPeakY = initialPeakY; 
+                        lastWristY = initialPeakY;
+                        lastCompressionTime = 0; 
+                        compressionIntervals = []; 
+                        compressionCount = 0; 
+                        statusElement.innerText = "เริ่มเลย! (Go!)";
+                        statusElement.style.color = "#4CAF50";
+                        counterElement.innerText = "จำนวนครั้ง: 0";
+                        handElement.innerText = "มือดี! (Hands Good!)";
+                        handElement.className = "feedbackBox good";
+                        swayElement.innerText = "ไหล่ตรง! (Sway Good!)"; // -- NEW --
+                        swayElement.className = "feedbackBox good"; // -- NEW --
+                    }, READY_THRESHOLD);
+                }
+            } else {
+                if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+                let errorMsg = "จัดท่า: ";
+                if (!isArmStraight) errorMsg += "เหยียดแขนตรง ";
+                if (!isAligned) errorMsg += "เลื่อนไหล่มาเหนือมือ ";
+                if (!handsTogether) errorMsg += "ประสานมือไว้ ";
+                statusElement.innerText = errorMsg;
+                statusElement.style.color = "#d9534f";
+            }
+        }
+
+        // --- 10. NEW: ฟังก์ชัน "Gatekeeper" (อัปเดตให้เช็ก Sway) ---
+        function runContinuousQualityCheck(p) {
+            const handsTogether = areHandsTogether(p);
+            const isAligned = areShouldersAligned(p); // -- NEW --
+
+            // --- 1. ตรวจสอบว่ามือและไหล่อยู่ในตำแหน่งหรือไม่ ---
+            if (handsTogether && isAligned) {
+                // ถ้าใช่ (YES)
+                handElement.innerText = "มือดี! (Hands Good!)";
+                handElement.className = "feedbackBox good";
+                swayElement.innerText = "ไหล่ตรง! (Sway Good!)";
+                swayElement.className = "feedbackBox good";
+                
+                // --- 2. รันตรรกะการนับ ---
+                runCountingLogic(p);
+                
+            } else {
+                // ถ้าไม่ (NO)
+                if (!handsTogether) {
+                    handElement.innerText = "ประสานมือ! (Interlock Hands!)";
+                    handElement.className = "feedbackBox bad";
+                }
+                if (!isAligned) {
+                    swayElement.innerText = "จัดไหล่! (Align Shoulders!)"; // -- NEW --
+                    swayElement.className = "feedbackBox bad"; // -- NEW --
+                }
+                
+                // --- 3. หยุดชั่วคราวและรีเซ็ต ---
+                direction = "up"; 
+                lastCompressionTime = 0; 
+                compressionIntervals = [];
+                rateElement.innerText = "Rate: --";
+                recoilElement.innerText = "Recoil: --";
+                armElement.innerText = "Arms: --";
+            }
+        }
+        
+        // --- 11. ตรรกะการนับ (อัปเดต Recoil) ---
+        function runCountingLogic(p) { 
+            const wristY = (p[15].y + p[16].y) / 2; 
+            let currentDirection = (wristY > lastWristY) ? "down" : "up";
+
+            // ตรวจจับ "จุดต่ำสุด" (Valley)
+            if (currentDirection === "up" && direction === "down") {
+                valleyY = lastWristY; 
+                const travelDistance = valleyY - lastPeakY; 
+                
+                if (travelDistance > MIN_DEPTH_THRESHOLD) {
+                    compressionCount++;
+                    counterElement.innerText = `จำนวนครั้ง: ${compressionCount}`;
+                    
+                    // --- ตรวจสอบแขนงอ (เหมือนเดิม) ---
+                    const rShoulder = p[12], rElbow = p[14], rWrist = p[16];
+                    const lShoulder = p[11], lElbow = p[13], lWrist = p[15];
+                    const rightArmAngle = getAngle(rShoulder, rElbow, rWrist);
+                    const leftArmAngle = getAngle(lShoulder, lElbow, lWrist);
+                    const isArmStraight = rightArmAngle > ARM_STRAIGHT_THRESHOLD && leftArmAngle > ARM_STRAIGHT_THRESHOLD;
+
+                    if (isArmStraight) { armElement.innerText = "แขนตรงดี! (Arms Good!)"; armElement.className = "feedbackBox good"; }
+                    else { armElement.innerText = "แขนงอ! (Keep Arms Straight!)"; armElement.className = "feedbackBox bad"; }
+                    
+                    // --- ตรรกะ Rate (เหมือนเดิม) ---
+                    const now = Date.now();
+                    if (lastCompressionTime > 0) {
+                        const timeDiff_ms = now - lastCompressionTime;
+                        compressionIntervals.push(timeDiff_ms);
+                    }
+                    lastCompressionTime = now;
+
+                    if (compressionCount % 4 === 0 && compressionIntervals.length > 0) {
+                        const lastIntervals = compressionIntervals.slice(-4);
+                        const sum = lastIntervals.reduce((a, b) => a + b, 0);
+                        const avgInterval_ms = sum / lastIntervals.length;
+                        const rate_cpm = (60 * 1000) / avgInterval_ms;
+
+                        if (rate_cpm < 100) { rateElement.innerText = "เร็วขึ้น! (Faster!)"; rateElement.className = "feedbackBox bad"; }
+                        else if (rate_cpm > 120) { rateElement.innerText = "ช้าลง! (Slower!)"; rateElement.className = "feedbackBox bad"; }
+                        else { rateElement.innerText = "อัตราดี! (Good Rate!)"; rateElement.className = "feedbackBox good"; }
+                    }
+
+                    // --- NEW: ตรรกะ Recoil (อัปเดต) ---
+                    const recoilDiff = lastPeakY - initialPeakY; // คำนวณค่า +-
+                    
+                    if (recoilDiff > RECOIL_THRESHOLD) { // ยกกลับมาไม่สุด
+                        recoilElement.innerText = "ปล่อยสุด! (Full Recoil!)";
+                        recoilElement.className = "feedbackBox bad";
+                    } else if (recoilDiff < -RECOIL_THRESHOLD) { // มือลอย
+                        recoilElement.innerText = "มือลอย! (Hands Off!)";
+                        recoilElement.className = "feedbackBox bad";
+                    } else {
+                        recoilElement.innerText = "คืนตัวดี! (Good Recoil!)";
+                        recoilElement.className = "feedbackBox good";
+                    }
+                } 
+            } 
+            // ตรวจจับ "จุดสูงสุด" (Peak)
+            else if (currentDirection === "down" && direction === "up") {
+                lastPeakY = lastWristY; 
+            }
+
+            direction = currentDirection;
+            lastWristY = wristY;
+        }
+
+        // --- 12. & 13. ตั้งค่า MediaPipe และ กล้อง (เหมือนเดิม) ---
+        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        pose.onResults(onResults);
+        const camera = new Camera(document.getElementById('webcam'), {
+            onFrame: async () => await pose.send({image: document.getElementById('webcam')}),
+            width: 640, height: 480
+        });
+        camera.start();
+
+    </script>
+</body>
+</html>
